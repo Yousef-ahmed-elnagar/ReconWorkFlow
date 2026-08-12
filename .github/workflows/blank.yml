@@ -135,7 +135,7 @@ jobs:
                   {"name": "New Subdomains", "value": $newlist},
                   {"name": "Removed Subdomains", "value": $removedlist}
                 ],
-                "footer": {"text": "RobustaStudio Subdomain Monitor"}
+                "footer": {"text": "Subdomain Monitor"}
               }]
             }')
           
