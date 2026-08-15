@@ -1,0 +1,318 @@
+name: Subdomain Monitor
+
+on:
+  schedule:
+    # Runs every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: 'Target domain to scan'
+        required: true
+        default: 'omnicell.com'
+      notify:
+        description: 'Send Discord notification even if no changes'
+        type: boolean
+        default: false
+
+# Prevent overlapping runs for the same domain
+concurrency:
+  group: subdomain-monitor-${{ github.event.inputs.domain || 'omnicell.com' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DOMAIN: ${{ github.event.inputs.domain || 'omnicell.com' }}
+      GO_VERSION: '1.21'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Cache Go bin
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-subfinder-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-subfinder-
+
+      - name: Install subfinder
+        run: |
+          go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify installation
+        run: subfinder -version
+
+      - name: Run subfinder
+        run: |
+          set -euo pipefail
+          echo "🔍 Scanning $DOMAIN ..."
+          # -all uses all passive sources (no API keys needed, just slower)
+          subfinder -d "$DOMAIN" -silent -all -recursive -timeout 30 \
+            -o raw-subdomains.txt || true
+
+          if [ ! -s raw-subdomains.txt ]; then
+            echo "⚠️ No subdomains found. Exiting gracefully."
+            touch current-subdomains.txt
+          else
+            # Deduplicate, sort, strip whitespace, drop empty lines
+            sort -u raw-subdomains.txt | sed '/^[[:space:]]*$/d' > current-subdomains.txt
+          fi
+
+          CURRENT_COUNT=$(wc -l < current-subdomains.txt)
+          echo "CURRENT_COUNT=$CURRENT_COUNT" >> "$GITHUB_ENV"
+          echo "Found $CURRENT_COUNT unique subdomains."
+
+      - name: Load previous results
+        id: check_previous
+        run: |
+          if [ -f previous-subdomains.txt ]; then
+            echo "previous_exists=true" >> "$GITHUB_OUTPUT"
+            echo "PREVIOUS_COUNT=$(wc -l < previous-subdomains.txt)" >> "$GITHUB_ENV"
+          else
+            echo "previous_exists=false" >> "$GITHUB_OUTPUT"
+            echo "PREVIOUS_COUNT=0" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compare with previous results
+        if: steps.check_previous.outputs.previous_exists == 'true'
+        run: |
+          set -euo pipefail
+          sort -u current-subdomains.txt > current-sorted.txt
+          sort -u previous-subdomains.txt > previous-sorted.txt
+
+          comm -23 current-sorted.txt previous-sorted.txt > new-subdomains.txt
+          comm -13 current-sorted.txt previous-sorted.txt > removed-subdomains.txt
+
+          NEW_COUNT=$(wc -l < new-subdomains.txt || echo 0)
+          REMOVED_COUNT=$(wc -l < removed-subdomains.txt || echo 0)
+
+          echo "NEW_COUNT=$NEW_COUNT" >> "$GITHUB_ENV"
+          echo "REMOVED_COUNT=$REMOVED_COUNT" >> "$GITHUB_ENV"
+
+          echo "✅ New: $NEW_COUNT | ❌ Removed: $REMOVED_COUNT"
+
+      - name: Initialize counters for first run
+        if: steps.check_previous.outputs.previous_exists != 'true'
+        run: |
+          echo "NEW_COUNT=0" >> "$GITHUB_ENV"
+          echo "REMOVED_COUNT=0" >> "$GITHUB_ENV"
+          : > new-subdomains.txt
+          : > removed-subdomains.txt
+
+      - name: Build job summary
+        run: |
+          {
+            echo "## 🛰️ Subdomain Monitor Report"
+            echo ""
+            echo "**Domain:** \`${DOMAIN}\`  "
+            echo "**Run:** \`${GITHUB_RUN_NUMBER}\`  "
+            echo "**Triggered by:** \`${GITHUB_EVENT_NAME}\`  "
+            echo "**Timestamp:** \`${{ github.event.repository.updated_at }}\`  "
+            echo ""
+            echo "| Metric | Count |"
+            echo "|--------|-------|"
+            echo "| Current Subdomains | $CURRENT_COUNT |"
+            echo "| Previous Subdomains | $PREVIOUS_COUNT |"
+            echo "| 🆕 New | $NEW_COUNT |"
+            echo "| ❌ Removed | $REMOVED_COUNT |"
+            echo ""
+
+            if [ "$NEW_COUNT" -gt 0 ]; then
+              echo "### 🆕 New Subdomains"
+              echo '```'
+              head -n 50 new-subdomains.txt
+              echo '```'
+              echo ""
+            fi
+
+            if [ "$REMOVED_COUNT" -gt 0 ]; then
+              echo "### ❌ Removed Subdomains"
+              echo '```'
+              head -n 50 removed-subdomains.txt
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare Discord notification
+        env:
+          SHOULD_NOTIFY_ALL: ${{ github.event.inputs.notify || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # Decide whether to notify
+          HAS_CHANGES=false
+          if [ "${{ steps.check_previous.outputs.previous_exists }}" == "true" ] && { [ "$NEW_COUNT" -gt 0 ] || [ "$REMOVED_COUNT" -gt 0 ]; }; then
+            HAS_CHANGES=true
+          fi
+          if [ "${{ steps.check_previous.outputs.previous_exists }}" != "true" ]; then
+            HAS_CHANGES=true
+          fi
+
+          if [ "$HAS_CHANGES" != "true" ] && [ "$SHOULD_NOTIFY_ALL" != "true" ]; then
+            echo "SKIP_NOTIFICATION=true" >> "$GITHUB_ENV"
+            echo "No changes detected — skipping Discord notification."
+            exit 0
+          fi
+          echo "SKIP_NOTIFICATION=false" >> "$GITHUB_ENV"
+
+          # Pick color: green = new found, red = removed only, blue = no change / first run
+          COLOR=5814783
+          if [ "$NEW_COUNT" -gt 0 ]; then COLOR=3066993; fi
+          if [ "$NEW_COUNT" -eq 0 ] && [ "$REMOVED_COUNT" -gt 0 ]; then COLOR=15158332; fi
+
+          # Build field values with safe truncation (Discord field limit: 1024 chars)
+          build_field() {
+            local file="$1" max_lines="${2:-10}" fallback="${3:-None}"
+            if [ -s "$file" ]; then
+              local out
+              out=$(head -n "$max_lines" "$file" | sed 's/^/• /' | jq -Rs .)
+              local total
+              total=$(wc -l < "$file")
+              if [ "$total" -gt "$max_lines" ]; then
+                out=$(echo -n "• ... and $((total - max_lines)) more\n" | jq -Rs . | jq -r --arg base "$(echo "$out" | jq -r .)" '$base + .')
+                out=$(jq -n --arg v "$out" '$v' )
+              fi
+              echo "$out"
+            else
+              echo "$(jq -n --arg v "$fallback" '$v')"
+            fi
+          }
+
+          CURRENT_LIST=$(head -n 15 current-subdomains.txt | sed 's/^/• /' | jq -Rs .)
+          if [ "$CURRENT_COUNT" -gt 15 ]; then
+            CURRENT_LIST=$(echo -n "$(echo "$CURRENT_LIST" | jq -r .)\n• ... and $((CURRENT_COUNT - 15)) more" | jq -Rs .)
+          elif [ "$CURRENT_COUNT" -eq 0 ]; then
+            CURRENT_LIST=$(jq -n --arg v "None" '$v')
+          fi
+
+          NEW_LIST=$(build_field new-subdomains.txt 10 "None")
+          REMOVED_LIST=$(build_field removed-subdomains.txt 10 "None")
+
+          if [ "$PREVIOUS_COUNT" -gt 0 ]; then
+            PREV_LIST=$(head -n 15 previous-subdomains.txt | sed 's/^/• /' | jq -Rs .)
+            if [ "$PREVIOUS_COUNT" -gt 15 ]; then
+              PREV_LIST=$(echo -n "$(echo "$PREV_LIST" | jq -r .)\n• ... and $((PREVIOUS_COUNT - 15)) more" | jq -Rs .)
+            fi
+          else
+            PREV_LIST=$(jq -n --arg v "No previous data" '$v')
+          fi
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          PAYLOAD=$(jq -n \
+            --arg title "🛰️ Subdomain Report: $DOMAIN" \
+            --arg url "$RUN_URL" \
+            --arg current "$CURRENT_COUNT" \
+            --arg previous "$PREVIOUS_COUNT" \
+            --arg new "$NEW_COUNT" \
+            --arg removed "$REMOVED_COUNT" \
+            --argjson color "$COLOR" \
+            --argjson currentlist "$CURRENT_LIST" \
+            --argjson prevlist "$PREV_LIST" \
+            --argjson newlist "$NEW_LIST" \
+            --argjson removedlist "$REMOVED_LIST" \
+            --arg ts "$NOW" \
+            --arg footer "Subdomain Monitor • Run #$GITHUB_RUN_NUMBER" \
+            '{
+              "embeds": [{
+                "title": $title,
+                "url": $url,
+                "color": $color,
+                "timestamp": $ts,
+                "fields": [
+                  {"name": "📊 Current", "value": $current, "inline": true},
+                  {"name": "📦 Previous", "value": $previous, "inline": true},
+                  {"name": "🆕 New", "value": $new, "inline": true},
+                  {"name": "❌ Removed", "value": $removed, "inline": true},
+                  {"name": "Current Subdomains", "value": $currentlist},
+                  {"name": "New Subdomains", "value": $newlist},
+                  {"name": "Removed Subdomains", "value": $removedlist}
+                ],
+                "footer": {"text": $footer}
+              }]
+            }')
+
+          {
+            echo "PAYLOAD<<EOF"
+            echo "$PAYLOAD"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Send to Discord
+        if: env.SKIP_NOTIFICATION != 'true'
+        env:
+          WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "⚠️ DISCORD_WEBHOOK_URL secret is not set. Skipping."
+            exit 0
+          fi
+          response=$(curl -sS -w "\n%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK_URL")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+          echo "HTTP $http_code"
+          if [ "$http_code" -ge 400 ]; then
+            echo "Discord response: $body"
+          fi
+
+      - name: Update previous results
+        run: |
+          cp -f current-subdomains.txt previous-subdomains.txt
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add previous-subdomains.txt
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            git commit -m "chore: update subdomains baseline [${TIMESTAMP}]"
+            git push origin HEAD
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subdomain-scan-${{ github.run_id }}
+          path: |
+            current-subdomains.txt
+            new-subdomains.txt
+            removed-subdomains.txt
+            raw-subdomains.txt
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          rm -f current-subdomains.txt previous-subdomains.txt \
+                new-subdomains.txt removed-subdomains.txt \
+                current-sorted.txt previous-sorted.txt raw-subdomains.txt
