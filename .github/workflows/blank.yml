@@ -9,7 +9,7 @@ on:
       domain:
         description: 'Target domain to scan'
         required: true
-        default: 'omnicell.com'
+        default: 'example.com'
 
 # Set permissions for the workflow
 permissions:
@@ -41,7 +41,7 @@ jobs:
 
       - name: Run subfinder
         env:
-          DOMAIN: ${{ github.event.inputs.domain || 'omnicell.com' }}
+          DOMAIN: ${{ github.event.inputs.domain || 'example.com' }}
         run: |
           subfinder -d "$DOMAIN" -silent -o current-subdomains.txt
           echo "SUBDOMAINS_COUNT=$(wc -l < current-subdomains.txt)" >> $GITHUB_ENV
@@ -72,7 +72,7 @@ jobs:
 
       - name: Prepare Discord notification
         env:
-          DOMAIN: ${{ github.event.inputs.domain || 'omnicell.com' }}
+          DOMAIN: ${{ github.event.inputs.domain || 'example.com' }}
         run: |
           # Format current subdomains (limit to 15)
           CURRENT_SUBDOMAINS=$(head -n 15 current-subdomains.txt | sed 's/^/- /')
