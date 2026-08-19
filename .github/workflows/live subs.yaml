@@ -3,13 +3,13 @@ name: Live Subdomain Monitor
 on:
   schedule:
     # Runs every 6 hours
-    #- cron: '0 */6 * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       domain:
         description: 'Target domain to scan'
         required: true
-        default: 'omnicell.com'
+        default: 'example.com'
       notify:
         description: 'Send Discord notification even if no changes'
         type: boolean
@@ -17,7 +17,7 @@ on:
 
 # Prevent overlapping runs for the same domain
 concurrency:
-  group: subdomain-monitor-${{ github.event.inputs.domain || 'omnicell.com' }}
+  group: subdomain-monitor-${{ github.event.inputs.domain || 'example.com' }}
   cancel-in-progress: false
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 45
 
     env:
-      DOMAIN: ${{ github.event.inputs.domain || 'omnicell.com' }}
+      DOMAIN: ${{ github.event.inputs.domain || 'example.com' }}
       GO_VERSION: '1.21'
 
     steps:
