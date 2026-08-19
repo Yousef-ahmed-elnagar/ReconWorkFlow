@@ -17,6 +17,7 @@ https://ebc.preprod.omnicell.com
 https://ems.omnicell.com
 https://encryptedmail.omnicell.com
 https://encryptedmailser.omnicell.com
+https://ex19.omnicell.com
 https://fr.integration.omnicell.com
 https://fr.preprod.omnicell.com
 https://go.omnicell.com
@@ -26,6 +27,7 @@ https://gslcorp.omnicell.com
 https://hoc-ap.omnicell.com
 https://hoc-avr.omnicell.com
 https://hoc-bcd.omnicell.com
+https://hoc-ccm.omnicell.com
 https://hoc-cog.omnicell.com
 https://hoc-csul.omnicell.com
 https://hoc-evs.omnicell.com
@@ -33,10 +35,13 @@ https://hoc-fre.omnicell.com
 https://hoc-gdc.omnicell.com
 https://hoc-icp.omnicell.com
 https://hoc-kd.omnicell.com
+https://hoc-kgi.omnicell.com
 https://hoc-pp.omnicell.com
 https://hoc-prod.omnicell.com
 https://hoc-qu.omnicell.com
 https://hoc-rems.omnicell.com
+https://hoc-sp.omnicell.com
+https://hoc-tcp.omnicell.com
 https://hoc-whs.omnicell.com
 https://hoc-wls.omnicell.com
 https://info.omnicell.com
