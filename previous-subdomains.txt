@@ -1,6 +1,5 @@
-dev.example.com
-m.example.com
-mail.example.com
-products.example.com
-support.example.com
-www.example.com
+admin.1debit.com
+op-scim.1debit.com
+processor.1debit.com
+schemas.1debit.com
+test-wp.1debit.com
