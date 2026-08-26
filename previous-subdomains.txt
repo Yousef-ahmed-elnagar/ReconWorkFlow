@@ -1,6 +1,7 @@
-dev.example.com
-m.example.com
-mail.example.com
-products.example.com
-support.example.com
-www.example.com
+atlas-app.services.klaviyo.com
+dev.code.services.klaviyo.com
+k-ops.services.klaviyo.com
+kcode.services.klaviyo.com
+oasdiff.services.klaviyo.com
+prod.code.services.klaviyo.com
+reviews-media.services.klaviyo.com
