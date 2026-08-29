@@ -1,2 +1,1 @@
-mail.example.com
-www.example.com
+www.vanguardjobs.com
