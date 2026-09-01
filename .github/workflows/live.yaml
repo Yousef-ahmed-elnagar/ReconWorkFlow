@@ -66,6 +66,18 @@ jobs:
           subfinder -version
           httpx -version
 
+      - name: Configure Subfinder API Keys
+        env:
+          PROVIDER_CONFIG: ${{ secrets.PROVIDER_CONFIG_CONTENT }}
+        run: |
+          mkdir -p ~/.config/subfinder
+          if [ -n "$PROVIDER_CONFIG" ]; then
+            echo "$PROVIDER_CONFIG" > ~/.config/subfinder/provider-config.yaml
+            echo "✅ Subfinder API configuration loaded successfully."
+          else
+            echo "⚠️ No API keys found in secrets. Running with free sources only."
+          fi
+
       - name: Run subfinder (passive enumeration)
         run: |
           set -euo pipefail
