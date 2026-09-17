@@ -1,15 +1,11 @@
 name: Live Subdomains
 
 on:
-  schedule:
-    # Runs every 6 hours
-    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       domain:
-        description: 'Target domain to scan'
+        description: 'Target domain to scan (e.g. example.com)'
         required: true
-        default: 'example.com'
       notify:
         description: 'Send Discord notification even if no changes'
         type: boolean
@@ -17,7 +13,7 @@ on:
 
 # Prevent overlapping runs for the same domain
 concurrency:
-  group: subdomain-monitor-${{ github.event.inputs.domain || 'example.com' }}
+  group: subdomain-monitor-${{ github.event.inputs.domain }}
   cancel-in-progress: false
 
 permissions:
@@ -29,7 +25,7 @@ jobs:
     timeout-minutes: 45
 
     env:
-      DOMAIN: ${{ github.event.inputs.domain || 'example.com' }}
+      DOMAIN: ${{ github.event.inputs.domain }}
       GO_VERSION: '1.21'
 
     steps:
@@ -82,7 +78,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "🔍 Scanning $DOMAIN ..."
-          # -all uses all passive sources (no API keys needed, just slower)
           subfinder -d "$DOMAIN" -silent -all -recursive -timeout 30 \
             -o raw-subdomains.txt || true
 
@@ -90,7 +85,6 @@ jobs:
             echo "⚠️ No subdomains found. Exiting gracefully."
             touch current-subdomains.txt
           else
-            # Deduplicate, sort, strip whitespace, drop empty lines
             sort -u raw-subdomains.txt | sed '/^[[:space:]]*$/d' > current-subdomains.txt
           fi
 
@@ -110,8 +104,6 @@ jobs:
             exit 0
           fi
 
-          # Probe each subdomain: HTTP/HTTPS, follow redirects, tech detection
-          # -silent suppresses banner, -status-code / -title / -tech-detect enrich output
           httpx -l current-subdomains.txt \
             -silent \
             -follow-redirects \
@@ -130,8 +122,6 @@ jobs:
             echo "⚠️ No live subdomains found."
             touch current-live.txt
           else
-            # httpx outputs lines like: https://sub.example.com [200] [Title] [tech]
-            # Extract just the URL (first whitespace-separated token) for tracking
             awk '{print $1}' raw-live.txt | sort -u | sed '/^[[:space:]]*$/d' > current-live.txt
           fi
 
@@ -282,7 +272,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Decide whether to notify
           HAS_CHANGES=false
           if [ "${{ steps.check_previous.outputs.previous_exists }}" == "true" ] && { [ "$NEW_COUNT" -gt 0 ] || [ "$REMOVED_COUNT" -gt 0 ]; }; then
             HAS_CHANGES=true
@@ -301,12 +290,10 @@ jobs:
           fi
           echo "SKIP_NOTIFICATION=false" >> "$GITHUB_ENV"
 
-          # Pick color: green = new found, red = removed only, blue = no change / first run
           COLOR=5814783
           if [ "$NEW_COUNT" -gt 0 ] || [ "$NEW_LIVE_COUNT" -gt 0 ]; then COLOR=3066993; fi
           if [ "$NEW_COUNT" -eq 0 ] && [ "$NEW_LIVE_COUNT" -eq 0 ] && { [ "$REMOVED_COUNT" -gt 0 ] || [ "$REMOVED_LIVE_COUNT" -gt 0 ]; }; then COLOR=15158332; fi
 
-          # Build field values with safe truncation (Discord field limit: 1024 chars)
           build_field() {
             local file="$1" max_lines="${2:-10}" fallback="${3:-None}"
             if [ -s "$file" ]; then
